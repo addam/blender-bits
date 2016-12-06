@@ -37,14 +37,14 @@ def draw_callback(self, context):
     bgl.glEnable(bgl.GL_BLEND)
     if is_view_transparent(context.space_data):
         bgl.glDisable(bgl.GL_DEPTH_TEST)
-    
+
     bgl.glPointSize(10)
     bgl.glColor4f(1.0, 0.0, 0.0, 0.5)
     bgl.glBegin(bgl.GL_POINTS)
     for point in self.points:
         bgl.glVertex3f(*point.co)
     bgl.glEnd()
-        
+
     bgl.glPointSize(3)
     bgl.glColor4f(0.0, 1.0, 1.0, 0.5 if is_view_transparent(context.space_data) else 1.0)
     bgl.glBegin(bgl.GL_POINTS)
@@ -84,7 +84,8 @@ class SnapBisect(bpy.types.Operator):
         origin = camera_center(context.space_data.region_3d.view_matrix)
         sce = context.scene
         def distance(v):
-            return (coords - region_2d(context.region, context.space_data.region_3d, v)).length
+            v_co = region_2d(context.region, context.space_data.region_3d, v)
+            return (coords - v_co).length if v_co else float("inf")
         def visible(v):
             direction = v - origin
             return not sce.ray_cast(origin, direction, direction.length - 1e-5)[0]
