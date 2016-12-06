@@ -29,6 +29,12 @@ def window_project(point, context):
     return result.xy / result.w
 
 
+def camera_center(matrix):
+    result = matrix.inverted() * Vector((0, 0, 0, 1))
+    print(result, result.xyz / result.w)
+    return result.xyz / result.w
+
+
 def draw_callback(self, context):
     bgl.glPolygonOffset(0, -20)
     bgl.glEnable(bgl.GL_BLEND)
@@ -90,28 +96,38 @@ class SnapBisect(bpy.types.Operator):
 
     def modal(self, context, event):
         max_distance = 10
-        if event.type in {'MIDDLEMOUSE', 'WHEELUPMOUSE', 'WHEELDOWNMOUSE'}:
-            # allow navigation
-            return {'PASS_THROUGH'}
-        elif event.type == 'LEFTMOUSE' and event.value == 'PRESS':
+        if event.type == 'LEFTMOUSE' and event.value == 'PRESS':
             distance, point = self.pick(context, event)
             if distance < max_distance:
                 self.points.add().co = point
                 context.region.tag_redraw()
-                if len(self.points) == 3:
-                    bpy.types.SpaceView3D.draw_handler_remove(self.handle, 'WINDOW')
-                    return self.execute(context)
-            return {'RUNNING_MODAL'}
         elif event.type in {'RIGHTMOUSE', 'ESC'}:
             bpy.types.SpaceView3D.draw_handler_remove(self.handle, 'WINDOW')
             context.region.tag_redraw()
             return {'CANCELLED'}
+        elif event.type in {'RET', 'SPACE', 'NUMPAD_ENTER'}:
+            if len(self.points) == 2:
+                self.points.add().co = camera_center(context.space_data.region_3d.perspective_matrix)
+        elif event.type in {'X', 'Y', 'Z'}:
+            origin = Vector(self.points[0].co)
+            offset = [Vector((1, 0, 0)), Vector((0, 1, 0)), Vector((0, 0, 1))]
+            if len(self.points) == 1:
+                self.points.add().co = origin + offset[("XYZ".index(event.type) + 1) % 3]
+                self.points.add().co = origin + offset[("XYZ".index(event.type) + 2) % 3]
+            if len(self.points) == 2:
+                self.points.add().co = origin + offset["XYZ".index(event.type)]
+        else: # event.type in {'MIDDLEMOUSE', 'WHEELUPMOUSE', 'WHEELDOWNMOUSE'}:
+            # allow navigation
+            return {'PASS_THROUGH'}
+        if len(self.points) >= 3:
+            bpy.types.SpaceView3D.draw_handler_remove(self.handle, 'WINDOW')
+            return self.execute(context)
         return {'RUNNING_MODAL'}
 
 
     def execute(self, context):
-        nor = normal(p.co for p in self.points)
-        co = Vector(self.points[0].co) + nor * self.offset
+        nor = normal(p.co for p in self.points[:3])
+        co = Vector(self.points[-1].co) + nor * self.offset
         bpy.ops.mesh.bisect(plane_co=co, plane_no=nor, use_fill=self.use_fill, clear_inner=self.clear_inner, clear_outer=self.clear_outer)
         return {'FINISHED'}
 
