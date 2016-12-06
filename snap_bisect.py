@@ -16,28 +16,27 @@ import bgl
 import bmesh
 from mathutils import Matrix, Vector
 from mathutils.geometry import normal
+from bpy_extras.view3d_utils import location_3d_to_region_2d as region_2d
+
+
+def is_view_transparent(view):
+    return view.viewport_shade in {'BOUNDBOX', 'WIREFRAME'} or not view.use_occlude_geometry
 
 
 def window_project(point, context):
-    w, h = context.region.width/2, context.region.height/2
-    tsf = Matrix((
-        (w, 0, 0, w),
-        (0, h, 0, h),
-        (0, 0, 1, 0),
-        (0, 0, 0, 1)))
-    result = tsf * context.space_data.region_3d.perspective_matrix * point.to_4d()
-    return result.xy / result.w
+    return region_2d(context.region, context.space_data.region_3d, point)
 
 
 def camera_center(matrix):
     result = matrix.inverted() * Vector((0, 0, 0, 1))
-    print(result, result.xyz / result.w)
     return result.xyz / result.w
 
 
 def draw_callback(self, context):
     bgl.glPolygonOffset(0, -20)
     bgl.glEnable(bgl.GL_BLEND)
+    if is_view_transparent(context.space_data):
+        bgl.glDisable(bgl.GL_DEPTH_TEST)
     
     bgl.glPointSize(10)
     bgl.glColor4f(1.0, 0.0, 0.0, 0.5)
@@ -47,7 +46,7 @@ def draw_callback(self, context):
     bgl.glEnd()
         
     bgl.glPointSize(3)
-    bgl.glColor4f(0.0, 1.0, 1.0, 1.0)
+    bgl.glColor4f(0.0, 1.0, 1.0, 0.5 if is_view_transparent(context.space_data) else 1.0)
     bgl.glBegin(bgl.GL_POINTS)
     for point in self.midpoints:
         bgl.glVertex3f(*point)
@@ -61,13 +60,6 @@ def draw_callback(self, context):
 
 def edge_centers(mesh, tsf=1):
     return [0.5 * (tsf * e.verts[0].co + tsf * e.verts[1].co) for e in mesh.edges]
-
-
-def Distance(coords, context):
-    vector = Vector(coords)
-    def distance(point):
-        return (vector - window_project(point, context).xy).length
-    return distance
 
 
 class Point(bpy.types.PropertyGroup):
@@ -89,9 +81,17 @@ class SnapBisect(bpy.types.Operator):
 
     def pick(self, context, event):
         coords = Vector((event.mouse_region_x, event.mouse_region_y))
+        origin = camera_center(context.space_data.region_3d.view_matrix)
+        sce = context.scene
         def distance(v):
-            return (coords - window_project(v, context).xy).length
-        return min((distance(v), v) for v in self.anchors)
+            return (coords - region_2d(context.region, context.space_data.region_3d, v)).length
+        def visible(v):
+            direction = v - origin
+            return not sce.ray_cast(origin, direction, direction.length - 1e-5)[0]
+        if is_view_transparent(context.space_data):
+            return min((distance(v), v) for v in self.anchors)
+        else:
+            return min((distance(v), v) for v in self.anchors if visible(v))
 
 
     def modal(self, context, event):
@@ -107,8 +107,8 @@ class SnapBisect(bpy.types.Operator):
             return {'CANCELLED'}
         elif event.type in {'RET', 'SPACE', 'NUMPAD_ENTER'}:
             if len(self.points) == 2:
-                self.points.add().co = camera_center(context.space_data.region_3d.perspective_matrix)
-        elif event.type in {'X', 'Y', 'Z'}:
+                self.points.add().co = camera_center(context.space_data.region_3d.view_matrix)
+        elif event.type in {'X', 'Y', 'Z'} and self.points:
             origin = Vector(self.points[0].co)
             offset = [Vector((1, 0, 0)), Vector((0, 1, 0)), Vector((0, 0, 1))]
             if len(self.points) == 1:
@@ -116,8 +116,7 @@ class SnapBisect(bpy.types.Operator):
                 self.points.add().co = origin + offset[("XYZ".index(event.type) + 2) % 3]
             if len(self.points) == 2:
                 self.points.add().co = origin + offset["XYZ".index(event.type)]
-        else: # event.type in {'MIDDLEMOUSE', 'WHEELUPMOUSE', 'WHEELDOWNMOUSE'}:
-            # allow navigation
+        else:
             return {'PASS_THROUGH'}
         if len(self.points) >= 3:
             bpy.types.SpaceView3D.draw_handler_remove(self.handle, 'WINDOW')
