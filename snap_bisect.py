@@ -23,6 +23,10 @@ def is_view_transparent(view):
     return view.viewport_shade in {'BOUNDBOX', 'WIREFRAME'} or not view.use_occlude_geometry
 
 
+def is_perspective(region):
+    return region.view_perspective == 'PERSP'
+
+
 def window_project(point, context):
     return region_2d(context.region, context.space_data.region_3d, point)
 
@@ -30,6 +34,10 @@ def window_project(point, context):
 def camera_center(matrix):
     result = matrix.inverted() * Vector((0, 0, 0, 1))
     return result.xyz / result.w
+
+
+def ortho_axis(matrix):
+    return matrix.row[2].to_3d()
 
 
 def draw_callback(self, context):
@@ -81,14 +89,20 @@ class SnapBisect(bpy.types.Operator):
 
     def pick(self, context, event):
         coords = Vector((event.mouse_region_x, event.mouse_region_y))
-        origin = camera_center(context.space_data.region_3d.view_matrix)
+        if is_perspective(context.space_data.region_3d):
+            origin = camera_center(context.space_data.region_3d.view_matrix)
+            direction = None
+        else:
+            origin = None
+            direction = ortho_axis(context.space_data.region_3d.view_matrix)
         sce = context.scene
         def distance(v):
             v_co = region_2d(context.region, context.space_data.region_3d, v)
             return (coords - v_co).length if v_co else float("inf")
-        def visible(v):
-            direction = v - origin
-            return not sce.ray_cast(origin, direction, direction.length - 1e-5)[0]
+        def visible(v, direction=direction):
+            if origin is not None:
+                direction = v - origin
+            return not sce.ray_cast(v - direction, direction, direction.length - 1e-5)[0]
         if is_view_transparent(context.space_data):
             return min((distance(v), v) for v in self.anchors)
         else:
@@ -108,7 +122,8 @@ class SnapBisect(bpy.types.Operator):
             return {'CANCELLED'}
         elif event.type in {'RET', 'SPACE', 'NUMPAD_ENTER'}:
             if len(self.points) == 2:
-                self.points.add().co = camera_center(context.space_data.region_3d.view_matrix)
+                mat = context.space_data.region_3d.view_matrix
+                self.points.add().co = camera_center(mat) if is_perspective(context.space_data.region_3d) else Vector(self.points[0].co) + ortho_axis(mat)
         elif event.type in {'X', 'Y', 'Z'} and self.points:
             origin = Vector(self.points[0].co)
             offset = [Vector((1, 0, 0)), Vector((0, 1, 0)), Vector((0, 0, 1))]
@@ -138,6 +153,7 @@ class SnapBisect(bpy.types.Operator):
 
 
     def invoke(self, context, event):
+        print(context.space_data.region_3d.view_matrix)
         bm = bmesh.from_edit_mesh(context.edit_object.data)
         tsf = context.edit_object.matrix_world
         self.midpoints = edge_centers(bm, tsf)
