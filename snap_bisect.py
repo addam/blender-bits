@@ -116,9 +116,11 @@ class SnapBisect(bpy.types.Operator):
             if distance < max_distance:
                 self.points.add().co = point
                 context.region.tag_redraw()
+                context.area.header_text_set("LMB: mark cut point, X/Y/Z: plane-aligned cut" if len(self.points) == 1 else "LMB: mark cut point, X/Y/Z: axis-aligned cut, Enter/Space: view-aligned cut")
         elif event.type in {'RIGHTMOUSE', 'ESC'}:
             bpy.types.SpaceView3D.draw_handler_remove(self.handle, 'WINDOW')
             context.region.tag_redraw()
+            context.area.header_text_set()
             return {'CANCELLED'}
         elif event.type in {'RET', 'SPACE', 'NUMPAD_ENTER'}:
             if len(self.points) == 2:
@@ -144,6 +146,7 @@ class SnapBisect(bpy.types.Operator):
         nor = normal(p.co for p in self.points[:3])
         co = Vector(self.points[-1].co) + nor * self.offset
         bpy.ops.mesh.bisect(plane_co=co, plane_no=nor, use_fill=self.use_fill, clear_inner=self.clear_inner, clear_outer=self.clear_outer)
+        context.area.header_text_set()
         return {'FINISHED'}
 
 
@@ -153,7 +156,6 @@ class SnapBisect(bpy.types.Operator):
 
 
     def invoke(self, context, event):
-        print(context.space_data.region_3d.view_matrix)
         bm = bmesh.from_edit_mesh(context.edit_object.data)
         tsf = context.edit_object.matrix_world
         self.midpoints = edge_centers(bm, tsf)
@@ -161,6 +163,7 @@ class SnapBisect(bpy.types.Operator):
         self.handle = bpy.types.SpaceView3D.draw_handler_add(draw_callback, (self, context), 'WINDOW', 'POST_VIEW')
         context.region.tag_redraw()
         context.window_manager.modal_handler_add(self)
+        context.area.header_text_set("LMB: mark cut point")
         return {'RUNNING_MODAL'}
 
 
