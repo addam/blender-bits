@@ -2,7 +2,7 @@ bl_info = {
     "name": "Snap Bisect",
     "author": "Addam Dominec (emu)",
     "version": (1, 0),
-    "blender": (2, 78, 0),
+    "blender": (2, 80, 0),
     "location": "View3D Toolbox > Snap Bisect",
     "description": "Calls the Bisect operator aligned to three vertices",
     "warning": "",
@@ -20,7 +20,7 @@ from bpy_extras.view3d_utils import location_3d_to_region_2d as region_2d
 
 
 def is_view_transparent(view):
-    return view.viewport_shade in {'BOUNDBOX', 'WIREFRAME'} or not view.use_occlude_geometry
+    return False #TODO view.viewport_shade in {'BOUNDBOX', 'WIREFRAME'} or not view.use_occlude_geometry
 
 
 def is_perspective(region):
@@ -32,7 +32,7 @@ def window_project(point, context):
 
 
 def camera_center(matrix):
-    result = matrix.inverted() * Vector((0, 0, 0, 1))
+    result = matrix.inverted() @ Vector((0, 0, 0, 1))
     return result.xyz / result.w
 
 
@@ -41,6 +41,7 @@ def ortho_axis(matrix):
 
 
 def draw_callback(self, context):
+    return #TODO
     bgl.glPolygonOffset(0, -20)
     bgl.glEnable(bgl.GL_BLEND)
     if is_view_transparent(context.space_data):
@@ -66,12 +67,12 @@ def draw_callback(self, context):
     bgl.glPolygonOffset(0, 0)
 
 
-def edge_centers(mesh, tsf=1):
-    return [0.5 * (tsf * e.verts[0].co + tsf * e.verts[1].co) for e in mesh.edges]
+def edge_centers(mesh, tsf):
+    return [0.5 * tsf @ (e.verts[0].co + e.verts[1].co) for e in mesh.edges]
 
 
 class Point(bpy.types.PropertyGroup):
-    co = bpy.props.FloatVectorProperty(name="Coordinates", size=3)
+    co: bpy.props.FloatVectorProperty(name="Coordinates", size=3)
 bpy.utils.register_class(Point)
 
 
@@ -80,11 +81,11 @@ class SnapBisect(bpy.types.Operator):
     bl_idname = "view3d.snap_bisect"
     bl_label = "Snap Bisect"
     bl_options = {'REGISTER', 'UNDO'}
-    offset = bpy.props.FloatProperty(name="Offset", description="Distance from the given points", unit='LENGTH')
-    points = bpy.props.CollectionProperty(type=Point, options={'HIDDEN', 'SKIP_SAVE'})
-    use_fill = bpy.props.BoolProperty(name="Fill", description="Fill in the cut")
-    clear_inner = bpy.props.BoolProperty(name="Clear Inner", description="Remove geometry behind the plane")
-    clear_outer = bpy.props.BoolProperty(name="Clear Inner", description="Remove geometry in front of the plane")
+    offset: bpy.props.FloatProperty(name="Offset", description="Distance from the given points", unit='LENGTH')
+    points: bpy.props.CollectionProperty(type=Point, options={'HIDDEN', 'SKIP_SAVE'})
+    use_fill: bpy.props.BoolProperty(name="Fill", description="Fill in the cut")
+    clear_inner: bpy.props.BoolProperty(name="Clear Inner", description="Remove geometry behind the plane")
+    clear_outer: bpy.props.BoolProperty(name="Clear Inner", description="Remove geometry in front of the plane")
 
 
     def pick(self, context, event):
@@ -96,13 +97,15 @@ class SnapBisect(bpy.types.Operator):
             origin = None
             direction = ortho_axis(context.space_data.region_3d.view_matrix)
         sce = context.scene
+        layer = context.view_layer
         def distance(v):
             v_co = region_2d(context.region, context.space_data.region_3d, v)
             return (coords - v_co).length if v_co else float("inf")
         def visible(v, direction=direction):
             if origin is not None:
                 direction = v - origin
-            return not sce.ray_cast(v - direction, direction, direction.length - 1e-5)[0]
+            is_hit, *data = sce.ray_cast(layer, v - direction, direction, distance=direction.length - 1e-5)
+            return not is_hit
         if is_view_transparent(context.space_data):
             return min((distance(v), v) for v in self.anchors)
         else:
@@ -120,7 +123,7 @@ class SnapBisect(bpy.types.Operator):
         elif event.type in {'RIGHTMOUSE', 'ESC'}:
             bpy.types.SpaceView3D.draw_handler_remove(self.handle, 'WINDOW')
             context.region.tag_redraw()
-            context.area.header_text_set()
+            context.area.header_text_set(None)
             return {'CANCELLED'}
         elif event.type in {'RET', 'SPACE', 'NUMPAD_ENTER'}:
             if len(self.points) == 2:
@@ -146,7 +149,7 @@ class SnapBisect(bpy.types.Operator):
         nor = normal(p.co for p in self.points[:3])
         co = Vector(self.points[-1].co) + nor * self.offset
         bpy.ops.mesh.bisect(plane_co=co, plane_no=nor, use_fill=self.use_fill, clear_inner=self.clear_inner, clear_outer=self.clear_outer)
-        context.area.header_text_set()
+        context.area.header_text_set(None)
         return {'FINISHED'}
 
 
@@ -159,7 +162,7 @@ class SnapBisect(bpy.types.Operator):
         bm = bmesh.from_edit_mesh(context.edit_object.data)
         tsf = context.edit_object.matrix_world
         self.midpoints = edge_centers(bm, tsf)
-        self.anchors = [tsf * v.co for v in bm.verts] + self.midpoints
+        self.anchors = [tsf @ v.co for v in bm.verts] + self.midpoints
         self.handle = bpy.types.SpaceView3D.draw_handler_add(draw_callback, (self, context), 'WINDOW', 'POST_VIEW')
         context.region.tag_redraw()
         context.window_manager.modal_handler_add(self)
@@ -174,12 +177,12 @@ def menu_func(self, context):
 def register():
     bpy.utils.register_class(SnapBisect)
     bpy.types.VIEW3D_MT_edit_mesh.append(menu_func)
-    bpy.types.VIEW3D_PT_tools_meshedit.append(menu_func)
+    #TODO bpy.types.VIEW3D_PT_tools_meshedit.append(menu_func)
 
 
 def unregister():
     bpy.types.VIEW3D_MT_edit_mesh.remove(menu_func)
-    bpy.types.VIEW3D_PT_tools_meshedit.remove(menu_func)
+    #TODO bpy.types.VIEW3D_PT_tools_meshedit.remove(menu_func)
     bpy.utils.unregister_class(SnapBisect)
 
 
