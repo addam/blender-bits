@@ -31,10 +31,6 @@ def is_perspective(region):
     return region.view_perspective == 'PERSP'
 
 
-def window_project(point, context):
-    return region_2d(context.region, context.space_data.region_3d, point)
-
-
 def camera_center(matrix):
     result = matrix.inverted() @ Vector((0, 0, 0, 1))
     return result.xyz / result.w
@@ -50,6 +46,7 @@ def draw_points(points, color):
     single_color_shader.uniform_float("color", color)
     batch.draw(single_color_shader)
 
+
 def create_callback(points):
     def draw_callback(self, context):
         op = context.active_operator
@@ -63,17 +60,12 @@ def create_callback(points):
     return draw_callback
 
 
-class Point(bpy.types.PropertyGroup):
-    co: bpy.props.FloatVectorProperty(name="Coordinates", size=3)
-
-
 class SnapBisect(bpy.types.Operator):
     """Calls the Bisect operator aligned to three vertices"""
     bl_idname = "mesh.snap_bisect"
     bl_label = "Snap Bisect"
     bl_options = {'REGISTER', 'UNDO'}
     offset: bpy.props.FloatProperty(name="Offset", description="Distance from the given points", unit='LENGTH')
-    # points: bpy.props.CollectionProperty(type=Point, options={'HIDDEN', 'SKIP_SAVE'})
     use_fill: bpy.props.BoolProperty(name="Fill", description="Fill in the cut")
     clear_inner: bpy.props.BoolProperty(name="Clear Inner", description="Remove geometry behind the plane")
     clear_outer: bpy.props.BoolProperty(name="Clear Inner", description="Remove geometry in front of the plane")
@@ -82,6 +74,16 @@ class SnapBisect(bpy.types.Operator):
         self.points = list()
     
     def pick(self, context, event):
+        def distance(v):
+            v_co = region_2d(context.region, context.space_data.region_3d, v)
+            return (coords - v_co).length if v_co else float("inf")
+        
+        def visible(v, direction=direction):
+            if origin is not None:
+                direction = v - origin
+            is_hit, *data = sce.ray_cast(layer, v - direction, direction, distance=direction.length - 1e-5)
+            return not is_hit
+        
         coords = Vector((event.mouse_region_x, event.mouse_region_y))
         if is_perspective(context.space_data.region_3d):
             origin = camera_center(context.space_data.region_3d.view_matrix)
@@ -91,14 +93,6 @@ class SnapBisect(bpy.types.Operator):
             direction = ortho_axis(context.space_data.region_3d.view_matrix)
         sce = context.scene
         layer = context.view_layer
-        def distance(v):
-            v_co = region_2d(context.region, context.space_data.region_3d, v)
-            return (coords - v_co).length if v_co else float("inf")
-        def visible(v, direction=direction):
-            if origin is not None:
-                direction = v - origin
-            is_hit, *data = sce.ray_cast(layer, v - direction, direction, distance=direction.length - 1e-5)
-            return not is_hit
         if is_view_transparent(context.space_data):
             return min((distance(v), v) for v in self.anchors)
         else:
@@ -194,24 +188,15 @@ def menu_func(self, context):
     self.layout.operator(SnapBisect.bl_idname)
 
 
-from bl_keymap_utils.io import keyconfig_init_from_data
-
 def register():
     bpy.utils.register_class(SnapBisect)
     bpy.types.VIEW3D_MT_edit_mesh.append(menu_func)
-    bpy.utils.register_class(Point)
-    mesh_tools = bpy.types.VIEW3D_PT_tools_active._tools['EDIT_MESH']
-    kc = bpy.context.window_manager.keyconfigs.addon
-    km = kc.keymaps.new(keyconfig_data[0], **keyconfig_data[1])
-    kmi = km.keymap_items.new(SnapBisect.bl_idname, 'SPACE', 'PRESS', ctrl=True, shift=True)
-    kmi.properties.offset = 0.5
-    mesh_tools[17] += (snap_bisect_tool_factory(km.name),)
-    #TODO bpy.types.VIEW3D_PT_tools_meshedit.append(menu_func)
+    # bpy.types.VIEW3D_PT_tools_meshedit.append(menu_func)
 
 
 def unregister():
     bpy.types.VIEW3D_MT_edit_mesh.remove(menu_func)
-    #TODO bpy.types.VIEW3D_PT_tools_meshedit.remove(menu_func)
+    # bpy.types.VIEW3D_PT_tools_meshedit.remove(menu_func)
     bpy.utils.unregister_class(SnapBisect)
 
 
