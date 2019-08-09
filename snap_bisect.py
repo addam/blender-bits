@@ -106,6 +106,7 @@ class SnapBisect(bpy.types.Operator):
             if distance < max_distance:
                 self.points.append(point)
                 self.marked_points.append(tuple(point))
+                self.anchors.remove(point)
                 context.region.tag_redraw()
                 context.area.header_text_set("LMB: mark cut point, X/Y/Z: plane-aligned cut" if len(self.points) == 1 else "LMB: mark cut point, X/Y/Z: axis-aligned cut, Enter/Space: view-aligned cut")
         elif event.type in {'RIGHTMOUSE', 'ESC'}:
@@ -133,10 +134,12 @@ class SnapBisect(bpy.types.Operator):
         return {'RUNNING_MODAL'}
 
     def execute(self, context):
+        context.area.header_text_set(None)
         nor = normal(self.points[:3])
+        if nor.length_squared == 0:
+            return {'CANCELLED'}
         co = self.points[-1] + nor * self.offset
         bpy.ops.mesh.bisect(plane_co=co, plane_no=nor, use_fill=self.use_fill, clear_inner=self.clear_inner, clear_outer=self.clear_outer)
-        context.area.header_text_set(None)
         return {'FINISHED'}
 
     @classmethod
