@@ -74,6 +74,14 @@ class SnapBisect(bpy.types.Operator):
         self.points = list()
     
     def pick(self, context, event):
+        coords = Vector((event.mouse_region_x, event.mouse_region_y))
+        if is_perspective(context.space_data.region_3d):
+            origin = camera_center(context.space_data.region_3d.view_matrix)
+            direction = None
+        else:
+            origin = None
+            direction = ortho_axis(context.space_data.region_3d.view_matrix)
+        
         def distance(v):
             v_co = region_2d(context.region, context.space_data.region_3d, v)
             return (coords - v_co).length if v_co else float("inf")
@@ -84,13 +92,6 @@ class SnapBisect(bpy.types.Operator):
             is_hit, *data = sce.ray_cast(layer, v - direction, direction, distance=direction.length - 1e-5)
             return not is_hit
         
-        coords = Vector((event.mouse_region_x, event.mouse_region_y))
-        if is_perspective(context.space_data.region_3d):
-            origin = camera_center(context.space_data.region_3d.view_matrix)
-            direction = None
-        else:
-            origin = None
-            direction = ortho_axis(context.space_data.region_3d.view_matrix)
         sce = context.scene
         layer = context.view_layer
         if is_view_transparent(context.space_data):
