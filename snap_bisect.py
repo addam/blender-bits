@@ -2,7 +2,7 @@ bl_info = {
     "name": "Snap Bisect",
     "author": "Addam Dominec (emu)",
     "version": (1, 0),
-    "blender": (2, 80, 0),
+    "blender": (2, 91, 0),
     "location": "View3D Toolbox > Snap Bisect",
     "description": "Calls the Bisect operator aligned to three vertices",
     "warning": "",
@@ -89,11 +89,11 @@ class SnapBisect(bpy.types.Operator):
         def visible(v, direction=direction):
             if origin is not None:
                 direction = v - origin
-            is_hit, *data = sce.ray_cast(layer, v - direction, direction, distance=direction.length - 1e-5)
+            is_hit, *data = sce.ray_cast(depsgraph, v - direction, direction, distance=direction.length - 1e-5)
             return not is_hit
         
         sce = context.scene
-        layer = context.view_layer
+        depsgraph = context.view_layer.depsgraph
         if is_view_transparent(context.space_data):
             return min((distance(v), v) for v in self.anchors)
         else:
