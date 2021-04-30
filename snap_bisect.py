@@ -23,12 +23,13 @@ from bl_ui.space_toolsystem_common import ToolDef
 
 single_color_shader = gpu.shader.from_builtin('3D_UNIFORM_COLOR')
 
-def is_view_transparent(view):
-    return False #TODO view.viewport_shade in {'BOUNDBOX', 'WIREFRAME'} or not view.use_occlude_geometry
+def is_view_transparent(context):
+    shading = context.space_data.shading
+    return shading.show_xray_wireframe if shading.type == 'WIREFRAME' else shading.show_xray
 
 
-def is_perspective(region):
-    return region.view_perspective == 'PERSP'
+def is_view_perspective(context):
+    return context.space_data.region_3d.view_perspective == 'PERSP'
 
 
 def camera_center(matrix):
@@ -52,7 +53,7 @@ def create_callback():
         op = context.active_operator
         bgl.glEnable(bgl.GL_DEPTH_TEST)
         bgl.glDepthFunc(bgl.GL_LESS)
-        alpha = 0.5 if is_view_transparent(context.space_data) else 1.0
+        alpha = 0.5 if is_view_transparent(context) else 1.0
         draw_points(draw_callback.points, (1.0, 0.0, 1.0, alpha))
         bgl.glDisable(bgl.GL_DEPTH_TEST)
         draw_points(draw_callback.marked_points, (1.0, 1.0, 0.0, alpha))
@@ -81,7 +82,7 @@ class SnapBisect(bpy.types.Operator):
     
     def pick(self, context, event):
         coords = Vector((event.mouse_region_x, event.mouse_region_y))
-        if is_perspective(context.space_data.region_3d):
+        if is_view_perspective(context):
             origin = camera_center(context.space_data.region_3d.view_matrix)
             direction = None
         else:
@@ -100,7 +101,7 @@ class SnapBisect(bpy.types.Operator):
         
         sce = context.scene
         depsgraph = context.view_layer.depsgraph
-        if is_view_transparent(context.space_data):
+        if is_view_transparent(context):
             return min((distance(v), v) for v in self.anchors)
         else:
             return min((distance(v), v) for v in self.anchors if visible(v))
@@ -139,7 +140,7 @@ class SnapBisect(bpy.types.Operator):
         elif event.type in {'RET', 'SPACE', 'NUMPAD_ENTER'}:
             if len(self.points) == 2:
                 mat = context.space_data.region_3d.view_matrix
-                self.points.append(camera_center(mat) if is_perspective(context.space_data.region_3d) else Vector(self.points[0]) + ortho_axis(mat))
+                self.points.append(camera_center(mat) if is_view_perspective(context) else Vector(self.points[0]) + ortho_axis(mat))
         elif event.type in {'X', 'Y', 'Z'} and self.points:
             origin = self.points[0]
             offset = [Vector((1, 0, 0)), Vector((0, 1, 0)), Vector((0, 0, 1))]
