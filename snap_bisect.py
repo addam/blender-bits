@@ -41,6 +41,10 @@ def ortho_axis(matrix):
     return matrix.row[2].to_3d()
 
 
+def avg(a, b):
+    return 0.5 * (a + b)
+
+
 def draw_points(points, color):
     batch = batch_for_shader(single_color_shader, "POINTS", {"pos" : points})
     single_color_shader.bind()
@@ -109,7 +113,7 @@ class SnapBisect(bpy.types.Operator):
     def reset_points(self):
         bm = self.bmesh
         tsf = self.matrix_world
-        midpoints = [0.5 * tsf @ (e.verts[0].co + e.verts[1].co) for e in bm.edges if not e.hide]
+        midpoints = [tsf @ avg(e.verts[0].co, e.verts[1].co) for e in bm.edges if not e.hide]
         if self.show_hidden:
           midpoints += [tsf @ v.co for v in bm.verts if v.hide]
         self.anchors = [tsf @ v.co for v in bm.verts if not v.hide] + midpoints
