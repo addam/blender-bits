@@ -11,7 +11,7 @@ from bpy.props import BoolProperty, FloatProperty
 from mathutils import Vector
 from mathutils.geometry import normal
 from gpu_extras.batch import batch_for_shader
-from bpy_extras.view3d_utils import location_3d_to_region_2d as region_2d
+import numpy as np
 
 
 def is_view_transparent(context):
@@ -66,14 +66,17 @@ class SnapBisect(bpy.types.Operator):
     clear_outer: BoolProperty(name="Clear Inner", description="Remove geometry in front of the plane")
 
     points: list  # picked points
-    anchors: list  # points available for picking
+    anchors: np.ndarray  # points available for picking
     draw_callback: object  # redraw function
     handle: object
 
     def pick(self, context, event):
         """Find the clicked point among self.anchors.
-        return: (distance from mouse click), (world coordinates of the anchor)"""
-        coords = Vector((event.mouse_region_x, event.mouse_region_y))
+        returns: clicked anchor, in world coordinates"""
+        max_distance = 10
+        sce = context.scene
+        depsgraph = context.view_layer.depsgraph
+        mouse_position = Vector((event.mouse_region_x, event.mouse_region_y))
         if is_view_perspective(context):
             origin = camera_center(context.space_data.region_3d.view_matrix)
             direction = None
@@ -81,30 +84,32 @@ class SnapBisect(bpy.types.Operator):
             origin = None
             direction = ortho_axis(context.space_data.region_3d.view_matrix)
 
-        def distance(v):
-            v_co = region_2d(context.region, context.space_data.region_3d, v)
-            return (coords - v_co).length if v_co else float("inf")
-
         def visible(v, dr=direction):
             if origin is not None:
-                dr = v - origin
-            is_hit, *_ = sce.ray_cast(depsgraph, v - dr, dr, distance=dr.length - 1e-5)
+                dr = v[:3] - origin
+            is_hit, *_ = sce.ray_cast(depsgraph, origin, dr, distance=np.sum(dr**2)**0.5 - 1e-5)
             return not is_hit
 
-        sce = context.scene
-        depsgraph = context.view_layer.depsgraph
-        if is_view_transparent(context):
-            return min((distance(v), v) for v in self.anchors)
-        return min((distance(v), v) for v in self.anchors if visible(v))
+        distances, points = distances_2d(self.anchors, mouse_position, context, max_distance)
+        if not distances.any():
+            return None
+        candidate = points[:, np.argmin(distances)]
+        # the following code is optimized to only call `visible` when necessary
+        if is_view_transparent(context) or visible(candidate):
+            return candidate
+        for candidate in points[:, np.argsort(distances)].T:
+            if visible(candidate):
+                return candidate
 
     def reset_points(self):
-        """Find available anchor points and store them also for drawing"""
+        """Find available anchor points and also store them for drawing"""
         bm = self.bmesh
         tsf = self.matrix_world
         midpoints = [tsf @ (e.verts[0].co + e.verts[1].co) * 0.5 for e in bm.edges if not e.hide]
         if self.show_hidden:
             midpoints += [tsf @ v.co for v in bm.verts if v.hide]
-        self.anchors = [tsf @ v.co for v in bm.verts if not v.hide] + midpoints
+        anchors = [tsf @ v.co for v in bm.verts if not v.hide] + midpoints
+        self.anchors = np.array([v.to_4d() for v in anchors]).T
         self.draw_callback.points = [tuple(co) for co in midpoints]
 
     def set_header_text(self, context, do_unset=False):
@@ -121,7 +126,6 @@ class SnapBisect(bpy.types.Operator):
 
     def modal(self, context, event):
         context.window.cursor_modal_set('KNIFE')
-        max_distance = 10
         if event.type in {'RIGHTMOUSE', 'ESC'} or not self.bmesh.is_valid:
             bpy.types.SpaceView3D.draw_handler_remove(self.handle, 'WINDOW')
             context.region.tag_redraw()
@@ -129,10 +133,9 @@ class SnapBisect(bpy.types.Operator):
             context.window.cursor_modal_restore()
             return {'CANCELLED'}
         if event.type == 'LEFTMOUSE' and event.value == 'PRESS':
-            distance, point = self.pick(context, event)
-            if distance < max_distance:
+            point = self.pick(context, event)
+            if point is not None:
                 self.points.append(point)
-                self.anchors.remove(point)
                 self.draw_callback.marked_points.append(tuple(point))
                 context.region.tag_redraw()
                 self.set_header_text(context)
@@ -204,6 +207,28 @@ class SnapBisect(bpy.types.Operator):
 
 def menu_func(self, _context):
     self.layout.operator(SnapBisect.bl_idname)
+
+
+# adopted from bpy_extras.view3d_utils
+def distances_2d(points, origin, context, max_distance=float("inf")):
+    """Find 3D points around an origin point as seen on-screen
+    points: np.array with 4D points in columns
+    origin: 2D point, origin for distance computation
+    context: bpy.context
+    max_distance: only return points up to this distance
+    returns: squared distances (np.array) and 3D points (np.array)
+    """
+    region = context.region
+    rv3d = context.space_data.region_3d
+    w = region.width / 2.0
+    h = region.height / 2.0
+    x, y = origin
+    persp = np.array(rv3d.perspective_matrix)
+    screen = np.array(((w, 0, 0, w - x), (0, h, 0, h - y), (0, 0, 1, 0), (0, 0, 0, 1)))
+    projected = (screen @ persp) @ points
+    distances_squared = np.sum((projected[:2, :] / projected[3:, :])**2, axis=0)
+    valid = (distances_squared <= max_distance**2) & (projected[3, :] > 0)
+    return distances_squared[valid], points[:3, valid]
 
 
 def register():
