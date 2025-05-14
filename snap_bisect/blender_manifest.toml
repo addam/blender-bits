@@ -11,6 +11,4 @@ tags = ["Mesh", "Modeling"]
 
 blender_version_min = "4.2.0"
 
-license = [
-  "SPDX:Zlib",
-]
+license = ["SPDX:GPL-3.0-or-later"]
