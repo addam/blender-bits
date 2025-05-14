@@ -1,0 +1,16 @@
+schema_version = "1.0.0"
+
+id = "snap_bisect"
+version = "1.0.2"
+name = "Snap Bisect"
+tagline = "Bisect operator with snapping to vertices or edge midpoints"
+maintainer = "Addam Dominec <adominec+blender@gmail.com>"
+type = "add-on"
+
+tags = ["Mesh", "Modeling"]
+
+blender_version_min = "4.2.0"
+
+license = [
+  "SPDX:Zlib",
+]

@@ -1,11 +1,17 @@
+bl_info = {
+    "name": "Snap Bisect",
+    "blender": (2, 42, 0),
+    "category": "Mesh",
+}
+
 import bpy
 import gpu
 import bmesh
+from bpy.props import BoolProperty, FloatProperty
 from mathutils import Vector
 from mathutils.geometry import normal
 from gpu_extras.batch import batch_for_shader
 from bpy_extras.view3d_utils import location_3d_to_region_2d as region_2d
-from bl_ui.space_toolsystem_common import ToolDef
 
 
 def is_view_transparent(context):
@@ -26,13 +32,9 @@ def ortho_axis(matrix):
     return matrix.row[2].to_3d()
 
 
-def avg(a, b):
-    return 0.5 * (a + b)
-
-
 def draw_points(points, color):
-    shader = gpu.shader.from_builtin("UNIFORM_COLOR")
-    batch = batch_for_shader(shader, "POINTS", {"pos" : points})
+    shader = gpu.shader.from_builtin('UNIFORM_COLOR')
+    batch = batch_for_shader(shader, 'POINTS', {"pos": points})
     shader.bind()
     shader.uniform_float("color", color)
     batch.draw(shader)
@@ -41,33 +43,36 @@ def draw_points(points, color):
 def create_callback():
     def draw_callback(self, context):
         alpha = 0.5 if is_view_transparent(context) else 1.0
+        gpu.state.depth_test_set('LESS_EQUAL')
+        gpu.state.blend_set('ALPHA')
         draw_points(draw_callback.points, (1.0, 0.0, 1.0, alpha))
-        draw_points(draw_callback.marked_points, (1.0, 1.0, 0.0, alpha))
-    draw_callback.points = list()
-    draw_callback.marked_points = list()
+        draw_points(draw_callback.marked_points, (1.0, 1.0, 0.0, 1.0))
+        gpu.state.depth_test_set('ALWAYS')
+        draw_points(draw_callback.marked_points, (1.0, 1.0, 0.0, 0.5))
+    draw_callback.points = []
+    draw_callback.marked_points = []
     return draw_callback
 
 
 class SnapBisect(bpy.types.Operator):
-    """Bisect operator with alignment to vertices or edge midpoints"""
+    """Bisect operator with snapping to vertices or edge midpoints"""
     bl_idname = "mesh.snap_bisect"
     bl_label = "Snap Bisect"
     bl_options = {'REGISTER', 'UNDO'}
-    offset: bpy.props.FloatProperty(name="Offset", description="Distance from the given points", unit='LENGTH')
-    use_fill: bpy.props.BoolProperty(name="Fill", description="Fill in the cut")
-    show_hidden: bpy.props.BoolProperty(name="Show Hidden", description="Show hidden vertices", options={'HIDDEN'})
-    clear_inner: bpy.props.BoolProperty(name="Clear Inner", description="Remove geometry behind the plane")
-    clear_outer: bpy.props.BoolProperty(name="Clear Inner", description="Remove geometry in front of the plane")
+    offset: FloatProperty(name="Offset", description="Distance from the given points", unit='LENGTH')
+    use_fill: BoolProperty(name="Fill", description="Fill in the cut")
+    show_hidden: BoolProperty(name="Show Hidden", description="Show hidden vertices", options={'HIDDEN'})
+    clear_inner: BoolProperty(name="Clear Inner", description="Remove geometry behind the plane")
+    clear_outer: BoolProperty(name="Clear Inner", description="Remove geometry in front of the plane")
 
-    def __init__(self):
-        self.bmesh = None
-        self.matrix_world = None
-        self.points = list()  # picked points
-        self.anchors = None  # points available for picking
-        self.draw_callback = None  # redraw function
-        self.handle = None
+    points: list  # picked points
+    anchors: list  # points available for picking
+    draw_callback: object  # redraw function
+    handle: object
 
     def pick(self, context, event):
+        """Find the clicked point among self.anchors.
+        return: (distance from mouse click), (world coordinates of the anchor)"""
         coords = Vector((event.mouse_region_x, event.mouse_region_y))
         if is_view_perspective(context):
             origin = camera_center(context.space_data.region_3d.view_matrix)
@@ -93,28 +98,35 @@ class SnapBisect(bpy.types.Operator):
         return min((distance(v), v) for v in self.anchors if visible(v))
 
     def reset_points(self):
+        """Find available anchor points and store them also for drawing"""
         bm = self.bmesh
         tsf = self.matrix_world
-        midpoints = [tsf @ avg(e.verts[0].co, e.verts[1].co) for e in bm.edges if not e.hide]
+        midpoints = [tsf @ (e.verts[0].co + e.verts[1].co) * 0.5 for e in bm.edges if not e.hide]
         if self.show_hidden:
             midpoints += [tsf @ v.co for v in bm.verts if v.hide]
         self.anchors = [tsf @ v.co for v in bm.verts if not v.hide] + midpoints
         self.draw_callback.points = [tuple(co) for co in midpoints]
 
     def set_header_text(self, context, do_unset=False):
-        text = (None if do_unset
+        text = (
+            None if do_unset
             else f"LMB: mark cut point, H: show hidden ({self.show_hidden})"
-            + ("" if len(self.points) == 0
+            + (
+                "" if len(self.points) == 0
                 else ", X/Y/Z: plane-aligned cut" if len(self.points) == 1
-                else ", X/Y/Z: axis-aligned cut, Enter/Space: view-aligned cut"))
+                else ", X/Y/Z: axis-aligned cut, Enter/Space: view-aligned cut"
+            )
+        )
         context.area.header_text_set(text)
 
     def modal(self, context, event):
+        context.window.cursor_modal_set('KNIFE')
         max_distance = 10
         if event.type in {'RIGHTMOUSE', 'ESC'} or not self.bmesh.is_valid:
             bpy.types.SpaceView3D.draw_handler_remove(self.handle, 'WINDOW')
             context.region.tag_redraw()
             self.set_header_text(context, True)
+            context.window.cursor_modal_restore()
             return {'CANCELLED'}
         if event.type == 'LEFTMOUSE' and event.value == 'PRESS':
             distance, point = self.pick(context, event)
@@ -127,8 +139,10 @@ class SnapBisect(bpy.types.Operator):
         elif event.type in {'RET', 'SPACE', 'NUMPAD_ENTER'}:
             if len(self.points) == 2:
                 mat = context.space_data.region_3d.view_matrix
-                self.points.append(camera_center(mat) if is_view_perspective(context)
-                    else Vector(self.points[0]) + ortho_axis(mat))
+                self.points.append(
+                    camera_center(mat) if is_view_perspective(context)
+                    else Vector(self.points[0]) + ortho_axis(mat)
+                )
         elif event.type in {'X', 'Y', 'Z'} and self.points:
             origin = self.points[0]
             offset = [Vector((1, 0, 0)), Vector((0, 1, 0)), Vector((0, 0, 1))]
@@ -146,6 +160,7 @@ class SnapBisect(bpy.types.Operator):
             return {'PASS_THROUGH'}
         if len(self.points) >= 3:
             bpy.types.SpaceView3D.draw_handler_remove(self.handle, 'WINDOW')
+            context.window.cursor_modal_restore()
             return self.execute(context)
         return {'RUNNING_MODAL'}
 
@@ -153,6 +168,7 @@ class SnapBisect(bpy.types.Operator):
         self.set_header_text(context, True)
         nor = normal(self.points[:3])
         if nor.length_squared == 0:
+            self.report(type={'ERROR_INVALID_INPUT'}, message="Selected points are collinear")
             return {'CANCELLED'}
         co = self.points[-1] + nor * self.offset
         bpy.ops.mesh.bisect(
@@ -169,7 +185,11 @@ class SnapBisect(bpy.types.Operator):
         return context.space_data.type == 'VIEW_3D' and context.mode == 'EDIT_MESH'
 
     def invoke(self, context, _event):
+        self.points = []
         self.bmesh = bmesh.from_edit_mesh(context.edit_object.data)
+        if not any(e.select for e in self.bmesh.edges):
+            self.report(type={'ERROR_INVALID_INPUT'}, message="Selected edges/faces required")
+            return {'CANCELLED'}
         self.matrix_world = context.edit_object.matrix_world
         self.draw_callback = create_callback()
         self.reset_points()
@@ -180,42 +200,6 @@ class SnapBisect(bpy.types.Operator):
         context.window_manager.modal_handler_add(self)
         self.set_header_text(context)
         return {'RUNNING_MODAL'}
-
-
-keyconfig_data = (
-    "3D View Tool: Snap Bisect",
-    {"space_type": 'VIEW_3D', "region_type": 'WINDOW'},
-    {"items": [
-        (
-            "view3d.cursor3d",
-            {"type": 'LEFTMOUSE', "value": 'PRESS'},
-            None
-        ),
-        (
-            "transform.translate",
-            {"type": 'EVT_TWEAK_L', "value": 'ANY'},
-            {"properties": [("release_confirm", True), ("cursor_transform", True)]}
-        ),
-     ]},
-)
-
-def snap_bisect_tool_factory(km):
-    @ToolDef.from_fn
-    def snap_bisect_tool():
-        def draw_settings(_context, layout, tool):
-            props = tool.operator_properties(SnapBisect.bl_idname)
-            layout.prop(props, "offset")
-            layout.prop(props, "clear_inner")
-            layout.prop(props, "clear_outer")
-        return {
-            "idname": "my_mesh.snap_bisect",
-            "label": "Snap Bisect",
-            "icon": "ops.mesh.knife_tool",
-            "widget": None,
-            "keymap": km,
-            "draw_settings": draw_settings,
-        }
-    return snap_bisect_tool
 
 
 def menu_func(self, _context):
@@ -234,3 +218,4 @@ def unregister():
 
 if __name__ == "__main__":
     register()
+    s = SnapBisect()
