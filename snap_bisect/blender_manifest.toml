@@ -1,7 +1,7 @@
 schema_version = "1.0.0"
 
 id = "snap_bisect"
-version = "1.0.2"
+version = "1.0.3"
 name = "Snap Bisect"
 tagline = "Bisect operator with snapping to vertices or edge midpoints"
 maintainer = "Addam Dominec <adominec+blender@gmail.com>"
