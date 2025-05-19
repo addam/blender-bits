@@ -95,11 +95,14 @@ class SnapBisect(bpy.types.Operator):
             return None
         candidate = points[:, np.argmin(distances)]
         # the following code is optimized to only call `visible` when necessary
-        if is_view_transparent(context) or visible(candidate):
+        if self.not_picked(candidate) and (is_view_transparent(context) or visible(candidate)):
             return candidate
         for candidate in points[:, np.argsort(distances)].T:
-            if visible(candidate):
+            if self.not_picked(candidate) and visible(candidate):
                 return candidate
+
+    def not_picked(self, nparray):
+        return not any(np.allclose(nparray, p) for p in self.points)
 
     def reset_points(self):
         """Find available anchor points and also store them for drawing"""
