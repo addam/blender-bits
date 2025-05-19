@@ -105,7 +105,7 @@ class SnapBisect(bpy.types.Operator):
         """Find available anchor points and also store them for drawing"""
         bm = self.bmesh
         tsf = self.matrix_world
-        midpoints = [tsf @ (e.verts[0].co + e.verts[1].co) * 0.5 for e in bm.edges if not e.hide]
+        midpoints = [tsf @ ((e.verts[0].co + e.verts[1].co) * 0.5) for e in bm.edges if not e.hide]
         if self.show_hidden:
             midpoints += [tsf @ v.co for v in bm.verts if v.hide]
         anchors = [tsf @ v.co for v in bm.verts if not v.hide] + midpoints
