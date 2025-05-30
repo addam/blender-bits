@@ -65,7 +65,7 @@ class SnapBisect(bpy.types.Operator):
     clear_inner: BoolProperty(name="Clear Inner", description="Remove geometry behind the plane")
     clear_outer: BoolProperty(name="Clear Inner", description="Remove geometry in front of the plane")
 
-    points: list  # picked points
+    picked_points: list
     anchors: np.ndarray  # points available for picking
     draw_callback: object  # redraw function
     handle: object
@@ -73,36 +73,37 @@ class SnapBisect(bpy.types.Operator):
     def pick(self, context, event):
         """Find the clicked point among self.anchors.
         returns: clicked anchor, in world coordinates"""
-        max_distance = 10
+        max_distance = 10  # on-screen distance around clicked position
+        epsilon = 1e-5  # spatial bias to prevent self-occlusion
         sce = context.scene
         depsgraph = context.view_layer.depsgraph
         mouse_position = Vector((event.mouse_region_x, event.mouse_region_y))
-        if is_view_perspective(context):
-            origin = camera_center(context.space_data.region_3d.view_matrix)
-            direction = None
-        else:
-            origin = None
-            direction = ortho_axis(context.space_data.region_3d.view_matrix)
-
-        def visible(v, dr=direction):
-            if origin is not None:
-                dr = v[:3] - origin
-            is_hit, *_ = sce.ray_cast(depsgraph, origin, dr, distance=np.sum(dr**2)**0.5 - 1e-5)
-            return not is_hit
 
         distances, points = distances_2d(self.anchors, mouse_position, context, max_distance)
-        if not distances.any():
-            return None
-        candidate = points[:, np.argmin(distances)]
-        # the following code is optimized to only call `visible` when necessary
-        if self.not_picked(candidate) and (is_view_transparent(context) or visible(candidate)):
-            return candidate
-        for candidate in points[:, np.argsort(distances)].T:
-            if self.not_picked(candidate) and visible(candidate):
+        while np.isfinite(distances).any():
+            index = np.argmin(distances)
+            candidate = points[:, index]
+            if self.is_picked(candidate):
+                distances[index] = np.inf
+                continue
+            if is_view_transparent(context):
                 return candidate
+            if is_view_perspective(context):
+                origin = camera_center(context.space_data.region_3d.view_matrix)
+                direction = Vector(candidate[:3] - origin)
+            else:
+                direction = ortho_axis(context.space_data.region_3d.view_matrix)
+                origin = candidate - direction
+            distance = direction.length - epsilon
+            is_occluded, hit_location, hit_normal, *_ = sce.ray_cast(depsgraph, origin, direction, distance=distance)
+            if not is_occluded:
+                return candidate
+            occluded = points.T.dot(hit_normal) < hit_location.dot(hit_normal) - epsilon
+            distances[occluded] = np.inf
+        return None
 
-    def not_picked(self, nparray):
-        return not any(np.allclose(nparray, p) for p in self.points)
+    def is_picked(self, nparray):
+        return any(np.allclose(nparray, p) for p in self.picked_points)
 
     def reset_points(self):
         """Find available anchor points and also store them for drawing"""
@@ -120,8 +121,8 @@ class SnapBisect(bpy.types.Operator):
             None if do_unset
             else f"LMB: mark cut point, H: show hidden ({self.show_hidden})"
             + (
-                "" if len(self.points) == 0
-                else ", X/Y/Z: plane-aligned cut" if len(self.points) == 1
+                "" if len(self.picked_points) == 0
+                else ", X/Y/Z: plane-aligned cut" if len(self.picked_points) == 1
                 else ", X/Y/Z: axis-aligned cut, Enter/Space: view-aligned cut"
             )
         )
@@ -138,25 +139,25 @@ class SnapBisect(bpy.types.Operator):
         if event.type == 'LEFTMOUSE' and event.value == 'PRESS':
             point = self.pick(context, event)
             if point is not None:
-                self.points.append(point)
+                self.picked_points.append(point)
                 self.draw_callback.marked_points.append(tuple(point))
                 context.region.tag_redraw()
                 self.set_header_text(context)
         elif event.type in {'RET', 'SPACE', 'NUMPAD_ENTER'}:
-            if len(self.points) == 2:
+            if len(self.picked_points) == 2:
                 mat = context.space_data.region_3d.view_matrix
-                self.points.append(
+                self.picked_points.append(
                     camera_center(mat) if is_view_perspective(context)
-                    else Vector(self.points[0]) + ortho_axis(mat)
+                    else Vector(self.picked_points[0]) + ortho_axis(mat)
                 )
-        elif event.type in {'X', 'Y', 'Z'} and self.points:
-            origin = self.points[0]
+        elif event.type in {'X', 'Y', 'Z'} and self.picked_points:
+            origin = self.picked_points[0]
             offset = [Vector((1, 0, 0)), Vector((0, 1, 0)), Vector((0, 0, 1))]
-            if len(self.points) == 1:
-                self.points.append(origin + offset["ZXY".index(event.type)])
-                self.points.append(origin + offset["YZX".index(event.type)])
-            if len(self.points) == 2:
-                self.points.append(origin + offset["XYZ".index(event.type)])
+            if len(self.picked_points) == 1:
+                self.picked_points.append(origin + offset["ZXY".index(event.type)])
+                self.picked_points.append(origin + offset["YZX".index(event.type)])
+            if len(self.picked_points) == 2:
+                self.picked_points.append(origin + offset["XYZ".index(event.type)])
         elif event.type == 'H' and event.value == 'PRESS':
             self.show_hidden = not self.show_hidden
             self.reset_points()
@@ -164,7 +165,7 @@ class SnapBisect(bpy.types.Operator):
             context.region.tag_redraw()
         else:
             return {'PASS_THROUGH'}
-        if len(self.points) >= 3:
+        if len(self.picked_points) >= 3:
             bpy.types.SpaceView3D.draw_handler_remove(self.handle, 'WINDOW')
             context.window.cursor_modal_restore()
             return self.execute(context)
@@ -172,11 +173,11 @@ class SnapBisect(bpy.types.Operator):
 
     def execute(self, context):
         self.set_header_text(context, True)
-        nor = normal(self.points[:3])
+        nor = normal(self.picked_points[:3])
         if nor.length_squared == 0:
             self.report(type={'ERROR_INVALID_INPUT'}, message="Selected points are collinear")
             return {'CANCELLED'}
-        co = self.points[-1] + nor * self.offset
+        co = self.picked_points[-1] + nor * self.offset
         bpy.ops.mesh.bisect(
             plane_co=co,
             plane_no=nor,
@@ -191,7 +192,7 @@ class SnapBisect(bpy.types.Operator):
         return context.space_data.type == 'VIEW_3D' and context.mode == 'EDIT_MESH'
 
     def invoke(self, context, _event):
-        self.points = []
+        self.picked_points = []
         self.bmesh = bmesh.from_edit_mesh(context.edit_object.data)
         if not any(e.select for e in self.bmesh.edges):
             self.report(type={'ERROR_INVALID_INPUT'}, message="Selected edges/faces required")
