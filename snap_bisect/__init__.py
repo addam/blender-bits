@@ -98,7 +98,7 @@ class SnapBisect(bpy.types.Operator):
             is_occluded, hit_location, hit_normal, *_ = sce.ray_cast(depsgraph, origin, direction, distance=distance)
             if not is_occluded:
                 return candidate
-            occluded = points.T.dot(hit_normal) < hit_location.dot(hit_normal) - epsilon
+            occluded = points.T.dot(hit_normal) < hit_location.dot(hit_normal) * (1 - epsilon)
             distances[occluded] = np.inf
         return None
 
