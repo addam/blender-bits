@@ -1,0 +1,14 @@
+schema_version = "1.0.0"
+
+id = "import_quantized_mesh"
+version = "1.0.0"
+name = "Import Quantized Mesh"
+tagline = "Import terrain tiles in Cesium Quantized Mesh format"
+maintainer = "Addam Dominec <adominec+blender@gmail.com>"
+type = "add-on"
+
+tags = ["Mesh", "Import"]
+
+blender_version_min = "4.2.0"
+
+license = ["SPDX:GPL-3.0-or-later"]
