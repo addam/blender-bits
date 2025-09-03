@@ -86,6 +86,7 @@ class SnapBisect(bpy.types.Operator):
             if self.is_picked(candidate):
                 distances[index] = np.inf
                 continue
+            # do a raycast to check if the point is visible
             if is_view_transparent(context):
                 return candidate
             if is_view_perspective(context):
@@ -94,11 +95,12 @@ class SnapBisect(bpy.types.Operator):
             else:
                 direction = ortho_axis(context.space_data.region_3d.view_matrix)
                 origin = candidate - direction
-            distance = direction.length - epsilon
+            distance = direction.length * (1 - epsilon)
             is_occluded, hit_location, hit_normal, *_ = sce.ray_cast(depsgraph, origin, direction, distance=distance)
             if not is_occluded:
                 return candidate
             occluded = points.T.dot(hit_normal) < hit_location.dot(hit_normal) * (1 - epsilon)
+            occluded[index] = True
             distances[occluded] = np.inf
         return None
 
