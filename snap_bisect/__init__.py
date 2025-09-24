@@ -63,7 +63,7 @@ class SnapBisect(bpy.types.Operator):
     use_fill: BoolProperty(name="Fill", description="Fill in the cut")
     show_hidden: BoolProperty(name="Show Hidden", description="Show hidden vertices", options={'HIDDEN'})
     clear_inner: BoolProperty(name="Clear Inner", description="Remove geometry behind the plane")
-    clear_outer: BoolProperty(name="Clear Inner", description="Remove geometry in front of the plane")
+    clear_outer: BoolProperty(name="Clear Outer", description="Remove geometry in front of the plane")
 
     picked_points: list
     anchors: np.ndarray  # points available for picking
