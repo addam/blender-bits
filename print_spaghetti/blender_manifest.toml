@@ -1,0 +1,26 @@
+schema_version = "1.0.0"
+
+id = "print_spaghetti"
+name = "Print Spaghetti"
+version = "0.1.0"
+tagline = "Author 3D-printer toolpaths directly from mesh edges/verts"
+maintainer = "Adam Dominec <dominec@zensys.cz>"
+type = "add-on"
+
+blender_version_min = "5.0.0"
+
+license = ["SPDX:GPL-3.0-or-later"]
+
+tags = ["Import-Export", "Mesh"]
+
+[build]
+paths_exclude_pattern = [
+  "__pycache__/",
+  "/.claude/",
+  "/tests/",
+  "/*.md",
+  "/*.gcode",
+  "/*.blend",
+  "/*.blend1",
+  "/*.zip",
+]
